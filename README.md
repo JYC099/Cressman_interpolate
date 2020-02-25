@@ -1,4 +1,5 @@
 # Cressman_interpolate
-Cressman interpolate use C++
 
-添加了源文件cressman_.cpp
+基于C++的cressman算法的实例
+
+
