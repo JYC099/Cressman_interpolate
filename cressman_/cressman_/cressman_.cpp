@@ -7,6 +7,10 @@
 #include <ctime> 
 #include <cmath>
 #include "windows.h"
+#include <string>
+#include <fstream>
+#include "gdal_priv.h"
+#include "ogrsf_frmts.h"
 using namespace std;
 
 class Point {
@@ -17,21 +21,56 @@ public:
     double _value;
 };
 
-vector<double> cressman_interpolate(double min_lat, double max_lat, double min_lon, double max_lon, int num,
-    double min_value, double max_value, int grid_hres, double radius, double approximation) {//网格分辨率单位是米
-    //生成随机点
+vector<double> cressman_interpolate(char *file_path, int grid_hres, double radius, double approximation,int &row) {//grid_hres网格分辨率单位是米，radius是搜索半径，approximation为近似值，row是输出结果每行栅格个数
     vector<Point> points_set;
-    srand((unsigned)time(0));
-    for (int i = 0; i < num; ++i) {
-        points_set.push_back(Point(((max_lat - min_lat) * ((double)(rand() / (double)RAND_MAX)) + min_lat),
-            ((max_lon - min_lon) * ((double)(rand() / (double)RAND_MAX)) + min_lon),
-            ((max_value - min_value) * ((double)(rand() / (double)RAND_MAX)) + min_value)));
-        //cout << points_set[i]._lat << " " << points_set[i]._lon << " " << points_set[i]._value << endl;
+    vector<double> out_interpolate;
+    double min_lat = 999.0, max_lat = 0.0, min_lon = 999.0, max_lon = 0.0;
+
+    GDALAllRegister();
+    //读取shp文件
+    GDALDataset* dataset = (GDALDataset*)GDALOpenEx(file_path, GDAL_OF_VECTOR, NULL, NULL, NULL);
+    if (dataset == NULL)
+    {
+        cout<<"Open failed"<<endl;
+        return out_interpolate;
+    }
+    OGRLayer* poLayer = dataset->GetLayer(0); //读取层
+    OGRFeature* poFeature;
+    poLayer->ResetReading();
+    int i = 0;
+    while ((poFeature = poLayer->GetNextFeature()) != NULL)
+    {
+        i = i++;
+        OGRFeatureDefn* poFDefn = poFeature->GetDefnRef();
+        OGRPoint* p = poFeature->GetGeometryRef()->toPoint();
+
+        int iField;
+        int n = poFDefn->GetFieldCount(); //获得字段的数目，不包括前两个字段（FID,Shape);
+        for (iField = 0; iField < n; iField++) 
+            points_set.push_back(Point(p->getY(), p->getX(), atof(poFeature->GetFieldAsString(iField))));//输入每个字段的值,Y是纬度
+        
+        
+           
+        OGRFeature::DestroyFeature(poFeature);
+    }
+    GDALClose(dataset);
+
+  
+    //获得点集合的最小外包矩形      
+    for (int i = 0; i < points_set.size(); ++i) {
+        if (points_set[i]._lat < min_lat)
+            min_lat = points_set[i]._lat;
+        if (points_set[i]._lon < min_lon)
+            min_lon = points_set[i]._lon;
+        if (points_set[i]._lat > max_lat)
+            max_lat = points_set[i]._lat;
+        if (points_set[i]._lon > max_lon)
+            max_lon = points_set[i]._lon;
     }
 
     //采用WGS84坐标下经纬度长度，y是纵向有多少格网，x是横向有多少格网
     int y = (int)(((max_lat - min_lat) * 111000) / grid_hres), x = (int)(((max_lon - min_lon) * 85390) / grid_hres);
-    vector<double> out_interpolate;
+    row = x;
 
     //设置默认值
     for (int i = 0; i < y; ++i)
@@ -91,7 +130,6 @@ vector<double> cressman_interpolate(double min_lat, double max_lat, double min_l
         }
     }
 
-
     return out_interpolate;
 }
 
@@ -99,10 +137,57 @@ vector<double> cressman_interpolate(double min_lat, double max_lat, double min_l
 
 int main()
 {
-    vector<double> p=cressman_interpolate(114, 114.5, 30.3, 30.7, 1900, 20.0, 37.0, 1000, 2000, 0.1);//逼近值设为0.1
-    for (int i = 0; i < p.size(); ++i)
-        cout << p[i] << endl;
-    cout << p.size();
+    char c[] = "D:/test_data/observe_points.shp";
+    int r_num;
+    vector<double> p = cressman_interpolate(c, 100, 8000, 0.1, r_num);//逼近值设为0.1
+
+    int ScreenSizeX = r_num;
+    int ScreenSizeY = p.size()/ r_num;
+
+    ofstream fout("D:/OutputImage.ppm");
+    fout << "P3\n" << ScreenSizeX << " " << ScreenSizeY << "\n255\n";
+    cout << "开始渲染" << endl;
+    for (int i = 0; i < p.size(); ++i) {
+
+        if (p[i] < -300) {
+            int ir = 0;
+            int ig = 0;
+            int ib = 0;
+            fout << ir << " " << ig << " " << ib << "\n";
+            continue;
+        }
+        if (p[i] > -300 && p[i] < 10) {
+            int ir = 0;
+            int ig = 0;
+            int ib = 255;
+            fout << ir << " " << ig << " " << ib << "\n";
+            continue;
+        }
+        if (p[i] >= 10 && p[i] < 20) {
+            int ir = 0;
+            int ig = 250;
+            int ib = 154;
+            fout << ir << " " << ig << " " << ib << "\n";
+            continue;
+        }
+        if (p[i] >= 20 && p[i] < 30) {
+            int ir = 255;
+            int ig = 193;
+            int ib = 37;
+            fout << ir << " " << ig << " " << ib << "\n";
+            continue;
+        }
+        if (p[i] >= 30) {
+            int ir = 255;
+            int ig = 0;
+            int ib = 0;
+            fout << ir << " " << ig << " " << ib << "\n";
+            continue;
+        }      
+    }
+
+    cout << "渲染完毕" << endl;
+    fout.close();
 }
 
 
